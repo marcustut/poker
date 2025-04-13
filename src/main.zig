@@ -15,33 +15,19 @@ pub fn main() !void {
 
     const cards = [_]lib.Card{ d.draw().?, d.draw().?, d.draw().?, d.draw().?, d.draw().? };
     var exprs = try lib.solve_target(allocator, &cards, 24);
-    defer exprs.deinit();
+    defer {
+        for (exprs.items) |expr|
+            expr.free(allocator) catch @panic("failed to free Expr");
+        exprs.deinit();
+    }
 
     std.debug.print("There are {} solutions for {s}\n", .{ exprs.items.len, cards });
     for (exprs.items) |expr| {
         std.debug.print("{}\n", .{expr});
     }
 
-    std.debug.print("{} cars left in deck\n", .{d.len});
+    std.debug.print("{} cards left in deck\n", .{d.len});
     std.debug.print("{}\n", .{d});
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
 }
 
 const std = @import("std");

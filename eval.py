@@ -37,7 +37,7 @@ def find_dfs_expressions(nums, target):
     dfs(nums, [str(num) for num in nums])
     return results
 
-results = find_dfs_expressions([8, 8, 4, 1, 13], 24)
+results = find_dfs_expressions([6, 4, 3, 1], 24)
 for r in results:
     print(r)
 print(f"There are {len(results)} solutions")

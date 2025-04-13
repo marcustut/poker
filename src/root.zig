@@ -96,7 +96,7 @@ pub const Deck = struct {
     cards: [DeckLength]?Card,
     len: u8,
 
-    pub fn make_deck() Deck {
+    pub fn makeDeck() Deck {
         var deck = Deck{ .cards = std.mem.zeroes([52]?Card), .len = DeckLength };
         inline for (std.meta.fields(Suit)) |s| {
             inline for (std.meta.fields(Rank)) |r| {
@@ -148,7 +148,7 @@ fn swap(comptime T: type, a: *T, b: *T) void {
     b.* = temp;
 }
 
-const Op = enum {
+pub const Op = enum {
     plus,
     minus,
     multiply,
@@ -169,9 +169,39 @@ const Op = enum {
     }
 };
 const ExprType = enum { number, expr };
-const Expr = union(ExprType) {
+pub const Expr = union(ExprType) {
     number: f64,
     expr: struct { op: Op, x: *const Expr, y: *const Expr },
+
+    pub fn free(self: *const Expr, allocator: std.mem.Allocator) !void {
+        switch (self.*) {
+            .number => {},
+            .expr => |e| {
+                try e.x.free(allocator);
+                try e.y.free(allocator);
+            },
+        }
+        allocator.destroy(self);
+    }
+
+    pub fn deepCopy(self: *const Expr, allocator: std.mem.Allocator) !*Expr {
+        const new_expr = try allocator.create(Expr);
+
+        switch (self.*) {
+            .number => |n| new_expr.* = Expr{ .number = n },
+            .expr => |e| {
+                new_expr.* = Expr{
+                    .expr = .{
+                        .op = e.op,
+                        .x = try e.x.deepCopy(allocator),
+                        .y = try e.y.deepCopy(allocator),
+                    },
+                };
+            },
+        }
+
+        return new_expr;
+    }
 
     pub fn format(
         self: @This(),
@@ -181,80 +211,72 @@ const Expr = union(ExprType) {
     ) !void {
         switch (self) {
             .number => |n| try writer.print("{d}", .{n}),
-            .expr => |_| {
-                // try writer.print("(", .{});
-                // try e.x.*.format("", .{}, writer); // recursive call
-                // try writer.print(" {} ", .{e.op});
-                // try e.y.*.format("", .{}, writer); // recursive call
-                // try writer.print(")", .{});
+            .expr => |e| {
+                try writer.print("(", .{});
+                try e.x.*.format("", .{}, writer); // recursive call
+                try writer.print(" {} ", .{e.op});
+                try e.y.*.format("", .{}, writer); // recursive call
+                try writer.print(")", .{});
             },
         }
     }
 };
 
-fn dfs(nums: []const f64, exprs: []const Expr, results: *std.ArrayList(Expr), target: f64) !void {
+fn dfs(allocator: std.mem.Allocator, nums: []const f64, exprs: []const Expr, results: *std.ArrayList(*Expr), target: f64) !void {
     if (nums.len == 1) {
-        if (nums[0] == target) {
-            try results.append(exprs[0]);
-            return;
-        }
+        if (nums[0] == target)
+            try results.append(try exprs[0].deepCopy(allocator)); // deepCopy is important otherwise we will have dangling pointers
+        return;
     }
-
-    // std.debug.print("exprs len: {}\n", .{exprs.len});
 
     var i: usize = 0;
     while (i < nums.len) : (i += 1) {
         var j: usize = i + 1;
         while (j < nums.len) : (j += 1) {
-            // std.debug.print("i: {}, j: {}\n", .{ i, j });
-
             const a: f64 = nums[i];
             const b: f64 = nums[j];
             const expr_a = &exprs[i];
             const expr_b = &exprs[j];
 
-            var pairs = [6]?struct { f64, Expr }{
+            var remaining_nums = try allocator.alloc(f64, nums.len);
+            defer allocator.free(remaining_nums);
+            var remaining_exprs = try allocator.alloc(Expr, exprs.len);
+            defer allocator.free(remaining_exprs);
+            var ri: usize = 0;
+            var k: usize = 0;
+            while (k < nums.len) : (k += 1) {
+                if (k != i and k != j) {
+                    remaining_nums[ri] = nums[k];
+                    remaining_exprs[ri] = exprs[k];
+                    ri += 1;
+                }
+            }
+
+            const operations = [6]?struct { f64, Expr }{
                 .{ a + b, Expr{ .expr = .{ .op = .plus, .x = expr_a, .y = expr_b } } },
                 .{ a - b, Expr{ .expr = .{ .op = .minus, .x = expr_a, .y = expr_b } } },
                 .{ b - a, Expr{ .expr = .{ .op = .minus, .x = expr_b, .y = expr_a } } },
                 .{ a * b, Expr{ .expr = .{ .op = .multiply, .x = expr_a, .y = expr_b } } },
-                null,
-                null,
+                if (b != 0) .{ a / b, Expr{ .expr = .{ .op = .divide, .x = expr_a, .y = expr_b } } } else null,
+                if (a != 0) .{ b / a, Expr{ .expr = .{ .op = .divide, .x = expr_b, .y = expr_a } } } else null,
             };
 
-            if (b != 0)
-                pairs[4] = .{ a / b, Expr{ .expr = .{ .op = .divide, .x = expr_a, .y = expr_b } } };
-            if (a != 0)
-                pairs[5] = .{ b / a, Expr{ .expr = .{ .op = .divide, .x = expr_b, .y = expr_a } } };
-
-            var remaining_nums: [5]f64 = undefined;
-            var remaining_exprs: [5]Expr = undefined;
-            var rc_index: usize = 0;
-            var k: usize = 0;
-            while (k < nums.len) : (k += 1) {
-                if (k != i and k != j) {
-                    remaining_nums[rc_index] = nums[k];
-                    remaining_exprs[rc_index] = exprs[k];
-                    rc_index += 1;
-                }
-            }
-
             // For each valid operation, recurse with remaining and result
-            for (pairs) |pair| {
-                if (pair == null) continue;
+            for (operations) |operation| {
+                if (operation == null) continue;
 
                 // Call dfs with reduced input
-                remaining_nums[rc_index] = pair.?.@"0";
-                remaining_exprs[rc_index] = pair.?.@"1";
+                remaining_nums[ri] = operation.?.@"0";
+                remaining_exprs[ri] = operation.?.@"1";
 
-                try dfs(remaining_nums[0 .. rc_index + 1], remaining_exprs[0 .. rc_index + 1], results, target);
+                try dfs(allocator, remaining_nums[0 .. ri + 1], remaining_exprs[0 .. ri + 1], results, target);
             }
         }
     }
 }
 
-pub fn solve_target(allocator: std.mem.Allocator, cards: []const Card, target: u8) !std.ArrayList(Expr) {
-    var results = std.ArrayList(Expr).init(allocator);
+pub fn solve_target(allocator: std.mem.Allocator, cards: []const Card, target: u8) !std.ArrayList(*Expr) {
+    var results = std.ArrayList(*Expr).init(allocator);
 
     var nums = try allocator.alloc(f64, cards.len);
     defer allocator.free(nums);
@@ -264,6 +286,6 @@ pub fn solve_target(allocator: std.mem.Allocator, cards: []const Card, target: u
     defer allocator.free(exprs);
     for (0..cards.len) |i| exprs[i] = Expr{ .number = @floatFromInt(cards[i].rank.value()) };
 
-    try dfs(nums, exprs, &results, @floatFromInt(target));
+    try dfs(allocator, nums, exprs, &results, @floatFromInt(target));
     return results;
 }
