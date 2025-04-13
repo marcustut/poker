@@ -2,14 +2,24 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        if (deinit_status == .leak) @panic("allocator leak");
+    }
+
     var d = lib.Deck.make_deck();
     d.shuffle();
     std.debug.print("Deck: {}\n", .{d});
 
-    var i: u8 = 5;
-    while (i > 0) : (i -= 1) {
-        const c = d.draw();
-        std.debug.print("draw 1 card: {?}\n", .{c});
+    const cards = [_]lib.Card{ d.draw().?, d.draw().?, d.draw().?, d.draw().?, d.draw().? };
+    var exprs = try lib.solve_target(allocator, &cards, 24);
+    defer exprs.deinit();
+
+    std.debug.print("There are {} solutions for {s}\n", .{ exprs.items.len, cards });
+    for (exprs.items) |expr| {
+        std.debug.print("{}\n", .{expr});
     }
 
     std.debug.print("{} cars left in deck\n", .{d.len});
