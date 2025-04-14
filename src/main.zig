@@ -9,22 +9,19 @@ pub fn main() !void {
         if (deinit_status == .leak) @panic("allocator leak");
     }
 
-    var d = lib.Deck.make_deck();
+    var d = lib.Deck.makeDeck();
     d.shuffle();
     std.debug.print("Deck: {}\n", .{d});
 
     const cards = [_]lib.Card{ d.draw().?, d.draw().?, d.draw().?, d.draw().?, d.draw().? };
     var exprs = try lib.solve_target(allocator, &cards, 24);
     defer {
-        for (exprs.items) |expr|
-            expr.free(allocator) catch @panic("failed to free Expr");
+        for (exprs.items) |expr| expr.free(allocator) catch @panic("failed to free Expr");
         exprs.deinit();
     }
 
+    for (exprs.items) |expr| std.debug.print("{}\n", .{expr});
     std.debug.print("There are {} solutions for {s}\n", .{ exprs.items.len, cards });
-    for (exprs.items) |expr| {
-        std.debug.print("{}\n", .{expr});
-    }
 
     std.debug.print("{} cards left in deck\n", .{d.len});
     std.debug.print("{}\n", .{d});
